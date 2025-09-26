@@ -19,6 +19,10 @@ PREFIX="vm"
 START=1
 END=1
 COUNT=""
+CPU_CORES=2
+CPU_SOCKETS=2
+CPU_THREADS=1
+MEMORY="12Gi"
 
 # Function to show usage
 show_usage() {
@@ -29,12 +33,25 @@ show_usage() {
     echo "  -s, --start NUMBER     Starting VM number (default: 1)"
     echo "  -e, --end NUMBER       Ending VM number (default: 1)"
     echo "  -c, --count NUMBER     Number of VMs to create (alternative to --end)"
+    echo "  --cores NUMBER         CPU cores per socket (default: 2)"
+    echo "  --sockets NUMBER       Number of CPU sockets (default: 2)"
+    echo "  --threads NUMBER       CPU threads per core (default: 1)"
+    echo "  --memory SIZE          Memory size with unit (default: 12Gi)"
     echo "  -h, --help            Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0 -p test -s 1 -e 10     # Creates test-1 to test-10"
-    echo "  $0 -p worker -c 5         # Creates worker-1 to worker-5"
-    echo "  $0 10                     # Creates vm-1 to vm-10 (legacy mode)"
+    echo "  $0 -p test -s 1 -e 10                    # Creates test-1 to test-10"
+    echo "  $0 -p worker -c 5                        # Creates worker-1 to worker-5"
+    echo "  $0 -p db --cores 4 --memory 16Gi -c 3    # Creates db-1 to db-3 with 4 cores, 16Gi RAM"
+    echo "  $0 -p app --sockets 1 --cores 8 -c 2     # Creates app-1 to app-2 with 1 socket, 8 cores"
+    echo "  $0 10                                    # Creates vm-1 to vm-10 (legacy mode)"
+    echo ""
+    echo "CPU Configuration:"
+    echo "  Total vCPUs = cores × sockets × threads"
+    echo "  Default: 2 cores × 2 sockets × 1 thread = 4 vCPUs"
+    echo ""
+    echo "Memory Examples:"
+    echo "  8Gi, 12Gi, 16Gi, 32Gi, 64Gi"
     echo ""
     echo "Note: If no options are provided, the first argument is treated as count (legacy mode)"
 }
@@ -56,6 +73,22 @@ while [[ $# -gt 0 ]]; do
             ;;
         -c|--count)
             COUNT="$2"
+            shift 2
+            ;;
+        --cores)
+            CPU_CORES="$2"
+            shift 2
+            ;;
+        --sockets)
+            CPU_SOCKETS="$2"
+            shift 2
+            ;;
+        --threads)
+            CPU_THREADS="$2"
+            shift 2
+            ;;
+        --memory)
+            MEMORY="$2"
             shift 2
             ;;
         -h|--help)
@@ -97,10 +130,45 @@ if [[ "$START" -gt "$END" ]]; then
     exit 1
 fi
 
-# Calculate total VMs
-TOTAL_VMS=$((END - START + 1))
+# Validate CPU parameters
+if [[ ! "$CPU_CORES" =~ ^[0-9]+$ ]] || [[ ! "$CPU_SOCKETS" =~ ^[0-9]+$ ]] || [[ ! "$CPU_THREADS" =~ ^[0-9]+$ ]]; then
+    echo "Error: CPU cores, sockets, and threads must be positive integers"
+    exit 1
+fi
 
-echo "Creating $TOTAL_VMS VMs with prefix '$PREFIX' from $PREFIX-$START to $PREFIX-$END"
+if [[ "$CPU_CORES" -lt 1 ]] || [[ "$CPU_SOCKETS" -lt 1 ]] || [[ "$CPU_THREADS" -lt 1 ]]; then
+    echo "Error: CPU cores, sockets, and threads must be at least 1"
+    exit 1
+fi
+
+# Validate memory format (basic check for Gi suffix)
+if [[ ! "$MEMORY" =~ ^[0-9]+Gi$ ]]; then
+    echo "Error: Memory must be specified with Gi suffix (e.g., 8Gi, 12Gi, 16Gi)"
+    exit 1
+fi
+
+# Calculate total VMs and total vCPUs
+TOTAL_VMS=$((END - START + 1))
+TOTAL_VCPUS=$((CPU_CORES * CPU_SOCKETS * CPU_THREADS))
+
+echo "=========================================="
+echo "    VM Creation Summary"
+echo "=========================================="
+echo "Prefix:        $PREFIX"
+echo "Range:         $PREFIX-$START to $PREFIX-$END"
+echo "Total VMs:     $TOTAL_VMS"
+echo "CPU Config:    $CPU_CORES cores × $CPU_SOCKETS sockets × $CPU_THREADS threads = $TOTAL_VCPUS vCPUs"
+echo "Memory:        $MEMORY per VM"
+echo "Namespace:     default"
+echo "Storage Class: ocs-storagecluster-ceph-rbd"
+echo ""
+echo "VM Specifications:"
+echo "  • CPU: $TOTAL_VCPUS vCPUs ($CPU_CORES cores × $CPU_SOCKETS sockets × $CPU_THREADS threads)"
+echo "  • Memory: $MEMORY RAM"
+echo "  • OS Disk: 10Gi (Fedora Cloud Base)"
+echo "  • Data Disk: 50Gi (blank)"
+echo ""
+echo "Starting VM creation in 3 seconds..."
 echo "Press Ctrl+C to cancel..."
 sleep 3
 
@@ -164,9 +232,9 @@ spec:
                 secretName: vmkeyroot
       domain:
         cpu:
-          cores: 2
-          sockets: 2
-          threads: 1
+          cores: $CPU_CORES
+          sockets: $CPU_SOCKETS
+          threads: $CPU_THREADS
         devices:
           disks:
             - disk:
@@ -191,7 +259,7 @@ spec:
           rng: {}
         resources:
           requests:
-            memory: 12Gi
+            memory: $MEMORY
       evictionStrategy: None
       hostname: $PREFIX-vmroot-$vm
       networks:
