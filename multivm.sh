@@ -1,18 +1,24 @@
 #!/bin/bash
 
-# Enhanced VM creation script with customizable prefix and range support
+# Enhanced VM creation script with customizable prefix, range, CPU, memory, and storage support
 # Usage: ./multivm.sh [OPTIONS]
 # Options:
 #   -p, --prefix PREFIX    VM name prefix (default: vm)
 #   -s, --start NUMBER     Starting VM number (default: 1)
 #   -e, --end NUMBER       Ending VM number (default: 1)
 #   -c, --count NUMBER     Number of VMs to create (alternative to --end)
+#   --cores NUMBER         CPU cores per socket (default: 2)
+#   --sockets NUMBER       Number of CPU sockets (default: 2)
+#   --threads NUMBER       CPU threads per core (default: 1)
+#   --memory SIZE          Memory size with unit (default: 12Gi)
+#   --storageclass NAME    Storage class name (default: ocs-storagecluster-ceph-rbd)
+#   --imageurl URL         Image URL (default: Fedora Cloud Base 42)
 #   -h, --help            Show this help message
 #
 # Examples:
-#   ./multivm.sh -p test -s 1 -e 10     # Creates test-1 to test-10
-#   ./multivm.sh -p worker -c 5         # Creates worker-1 to worker-5
-#   ./multivm.sh 10                     # Creates vm-1 to vm-10 (legacy mode)
+#   ./multivm.sh -p test -s 1 -e 10                    # Creates test-1 to test-10
+#   ./multivm.sh -p worker -c 5                        # Creates worker-1 to worker-5
+#   ./multivm.sh -p db --cores 4 --memory 16Gi -c 3    # Creates db-1 to db-3 with 4 cores, 16Gi RAM
 
 # Default values
 PREFIX="vm"
@@ -23,6 +29,8 @@ CPU_CORES=2
 CPU_SOCKETS=2
 CPU_THREADS=1
 MEMORY="12Gi"
+STORAGECLASS="ocs-storagecluster-ceph-rbd"
+IMAGEURL="https://download.fedoraproject.org/pub/fedora/linux/releases/42/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-42-1.1.x86_64.qcow2"
 
 # Function to show usage
 show_usage() {
@@ -37,6 +45,8 @@ show_usage() {
     echo "  --sockets NUMBER       Number of CPU sockets (default: 2)"
     echo "  --threads NUMBER       CPU threads per core (default: 1)"
     echo "  --memory SIZE          Memory size with unit (default: 12Gi)"
+    echo "  --storageclass NAME    Storage class name (default: ocs-storagecluster-ceph-rbd)"
+    echo "  --imageurl URL         Image URL (default: https://download.fedoraproject.org/pub/fedora/linux/releases/42/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-42-1.1.x86_64.qcow2)"
     echo "  -h, --help            Show this help message"
     echo ""
     echo "Examples:"
@@ -44,7 +54,7 @@ show_usage() {
     echo "  $0 -p worker -c 5                        # Creates worker-1 to worker-5"
     echo "  $0 -p db --cores 4 --memory 16Gi -c 3    # Creates db-1 to db-3 with 4 cores, 16Gi RAM"
     echo "  $0 -p app --sockets 1 --cores 8 -c 2     # Creates app-1 to app-2 with 1 socket, 8 cores"
-    echo "  $0 10                                    # Creates vm-1 to vm-10 (legacy mode)"
+    echo "  $0 -p web --storageclass fast-ssd -c 3   # Creates web-1 to web-3 with custom storage class"
     echo ""
     echo "CPU Configuration:"
     echo "  Total vCPUs = cores × sockets × threads"
@@ -53,7 +63,7 @@ show_usage() {
     echo "Memory Examples:"
     echo "  8Gi, 12Gi, 16Gi, 32Gi, 64Gi"
     echo ""
-    echo "Note: If no options are provided, the first argument is treated as count (legacy mode)"
+    echo "Note: You must specify at least one VM to create using -c, -e, or -s options"
 }
 
 # Parse command line arguments
@@ -91,6 +101,14 @@ while [[ $# -gt 0 ]]; do
             MEMORY="$2"
             shift 2
             ;;
+        --storageclass)
+            STORAGECLASS="$2"
+            shift 2
+            ;;
+        --imageurl)
+            IMAGEURL="$2"
+            shift 2
+            ;;
         -h|--help)
             show_usage
             exit 0
@@ -101,18 +119,20 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
-            # Legacy mode: if it's a number, treat it as count
-            if [[ "$1" =~ ^[0-9]+$ ]]; then
-                COUNT="$1"
-                shift
-            else
-                echo "Invalid argument: $1"
-                show_usage
-                exit 1
-            fi
+            echo "Invalid argument: $1"
+            show_usage
+            exit 1
             ;;
     esac
 done
+
+# Check if any meaningful options were provided
+if [[ -z "$COUNT" ]] && [[ "$START" -eq 1 ]] && [[ "$END" -eq 1 ]]; then
+    echo "Error: No options provided. You must specify at least one VM to create."
+    echo ""
+    show_usage
+    exit 1
+fi
 
 # Calculate END if COUNT is provided
 if [[ -n "$COUNT" ]]; then
@@ -160,12 +180,13 @@ echo "Total VMs:     $TOTAL_VMS"
 echo "CPU Config:    $CPU_CORES cores × $CPU_SOCKETS sockets × $CPU_THREADS threads = $TOTAL_VCPUS vCPUs"
 echo "Memory:        $MEMORY per VM"
 echo "Namespace:     default"
-echo "Storage Class: ocs-storagecluster-ceph-rbd"
+echo "Storage Class: $STORAGECLASS"
+echo "Image URL:     $IMAGEURL"
 echo ""
 echo "VM Specifications:"
 echo "  • CPU: $TOTAL_VCPUS vCPUs ($CPU_CORES cores × $CPU_SOCKETS sockets × $CPU_THREADS threads)"
 echo "  • Memory: $MEMORY RAM"
-echo "  • OS Disk: 10Gi (Fedora Cloud Base)"
+echo "  • OS Disk: 10Gi ($IMAGEURL)"
 echo "  • Data Disk: 50Gi (blank)"
 echo ""
 echo "Starting VM creation in 3 seconds..."
@@ -191,12 +212,12 @@ spec:
           resources:
             requests:
               storage: 10Gi
-          storageClassName: ocs-storagecluster-ceph-rbd
+          storageClassName: $STORAGECLASS
           volumeMode: Block
         source:
           http:
             url: >-
-              http://n42-h01-b06-mx750c.rdu3.labs.perfscale.redhat.com/ekuric/rhel9/Fedora-Cloud-Base-Generic-42-1.1.x86_64.qcow2
+              $IMAGEURL
     - metadata:
         name: $PREFIX-$vm-data
       spec:
@@ -206,7 +227,7 @@ spec:
           resources:
             requests:
               storage: 50Gi
-          storageClassName: ocs-storagecluster-ceph-rbd
+          storageClassName: $STORAGECLASS
           volumeMode: Block
         source:
           blank: {}
@@ -219,9 +240,9 @@ spec:
         vm.kubefirt.io/workload: server
       labels:
         flavor.template.kubevirt.io/large: 'true'
-        kubevirt.io/domain: $PREFIX-vmroot-elvir
+        kubevirt.io/domain: $PREFIX-vmroot
         kubevirt.io/size: large
-        vm.kubevirt.io/name: $PREFIX-vmroot-elvir-$vm 
+        vm.kubevirt.io/name: $PREFIX-vmroot-$vm 
     spec:
       accessCredentials:
         - sshPublicKey:
