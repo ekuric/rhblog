@@ -31,6 +31,8 @@ CPU_THREADS=1
 MEMORY="12Gi"
 STORAGECLASS="ocs-storagecluster-ceph-rbd"
 IMAGEURL="https://download.fedoraproject.org/pub/fedora/linux/releases/42/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-42-1.1.x86_64.qcow2"
+OPSTORAGE="10Gi"
+DATASTORAGE="50Gi"
 
 # Function to show usage
 show_usage() {
@@ -55,6 +57,7 @@ show_usage() {
     echo "  $0 -p db --cores 4 --memory 16Gi -c 3    # Creates db-1 to db-3 with 4 cores, 16Gi RAM"
     echo "  $0 -p app --sockets 1 --cores 8 -c 2     # Creates app-1 to app-2 with 1 socket, 8 cores"
     echo "  $0 -p web --storageclass fast-ssd -c 3   # Creates web-1 to web-3 with custom storage class"
+    echo "  $0 -p db --opstorage 10Gi --datastorage 50Gi --cores 4 --memory 16Gi -c 3    # Creates db-1 to db-3 with 10Gi OS disk and 50Gi data disk, 4 cores, 16Gi RAM"
     echo ""
     echo "CPU Configuration:"
     echo "  Total vCPUs = cores × sockets × threads"
@@ -62,6 +65,9 @@ show_usage() {
     echo ""
     echo "Memory Examples:"
     echo "  8Gi, 12Gi, 16Gi, 32Gi, 64Gi"
+    echo ""
+    echo "Storage Examples:"
+    echo "  10Gi, 50Gi, 100Gi, 500Gi"
     echo ""
     echo "Note: You must specify at least one VM to create using -c, -e, or -s options"
 }
@@ -107,6 +113,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --imageurl)
             IMAGEURL="$2"
+            shift 2
+            ;;
+        --opstorage)
+            OPSTORAGE="$2"
+            shift 2
+            ;;
+        --datastorage)
+            DATASTORAGE="$2"
             shift 2
             ;;
         -h|--help)
@@ -167,6 +181,17 @@ if [[ ! "$MEMORY" =~ ^[0-9]+Gi$ ]]; then
     exit 1
 fi
 
+# Validate storage format (basic check for Gi suffix)
+if [[ ! "$OPSTORAGE" =~ ^[0-9]+Gi$ ]] || [[ ! "$DATASTORAGE" =~ ^[0-9]+Gi$ ]]; then
+    echo "Error: Storage must be specified with Gi suffix (e.g., 10Gi, 50Gi)"
+    exit 1
+fi
+
+if [[ "$OPSTORAGE" -lt 10 ]] || [[ "$DATASTORAGE" -lt 50 ]]; then
+    echo "Error: Storage must be at least 10Gi for OS disk and 50Gi for data disk"
+    exit 1
+fi
+
 # Calculate total VMs and total vCPUs
 TOTAL_VMS=$((END - START + 1))
 TOTAL_VCPUS=$((CPU_CORES * CPU_SOCKETS * CPU_THREADS))
@@ -181,13 +206,15 @@ echo "CPU Config:    $CPU_CORES cores × $CPU_SOCKETS sockets × $CPU_THREADS th
 echo "Memory:        $MEMORY per VM"
 echo "Namespace:     default"
 echo "Storage Class: $STORAGECLASS"
-echo "Image URL:     $IMAGEURL"
+echo "OS Disk:      $OPSTORAGE"
+echo "Data Disk:    $DATASTORAGE"
+echo "Image URL:    $IMAGEURL"
 echo ""
 echo "VM Specifications:"
 echo "  • CPU: $TOTAL_VCPUS vCPUs ($CPU_CORES cores × $CPU_SOCKETS sockets × $CPU_THREADS threads)"
 echo "  • Memory: $MEMORY RAM"
-echo "  • OS Disk: 10Gi ($IMAGEURL)"
-echo "  • Data Disk: 50Gi (blank)"
+echo "  • OS Disk: $OPSTORAGE ($IMAGEURL)"
+echo "  • Data Disk: $DATASTORAGE (blank)"
 echo ""
 echo "Starting VM creation in 3 seconds..."
 echo "Press Ctrl+C to cancel..."
@@ -211,7 +238,7 @@ spec:
             - ReadWriteOnce
           resources:
             requests:
-              storage: 10Gi
+              storage: $OPSTORAGE
           storageClassName: $STORAGECLASS
           volumeMode: Block
         source:
@@ -226,7 +253,7 @@ spec:
             - ReadWriteOnce
           resources:
             requests:
-              storage: 50Gi
+              storage: $DATASTORAGE
           storageClassName: $STORAGECLASS
           volumeMode: Block
         source:
