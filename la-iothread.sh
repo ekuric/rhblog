@@ -406,6 +406,9 @@ spec:
               name: default
           networkInterfaceMultiqueue: true
           rng: {}
+        ioThreads:
+          supplementalPoolThreadCount: 8
+        ioThreadsPolicy: supplementalPool
         resources:
           requests:
             cpu: $CPU_REQUEST
